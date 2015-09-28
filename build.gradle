@@ -1,0 +1,151 @@
+import org.apache.tools.ant.filters.ReplaceTokens
+
+buildscript {
+    repositories { jcenter() }
+    dependencies {
+        classpath 'nl.javadude.gradle.plugins:license-gradle-plugin:0.11.0'
+        classpath 'com.github.jengelman.gradle.plugins:shadow:1.2.2'
+    }
+}
+
+apply plugin: 'license'
+
+ext.projectName = 'Opal'
+ext.packaging = 'jar'
+ext.author = 'ToppleTheNun'
+ext.authorUrl = 'https://github.com/Nunnery'
+ext.inceptionYear = '2015'
+
+subprojects {
+    apply plugin: 'license'
+    apply plugin: 'com.github.johnrengelman.shadow'
+    apply plugin: 'java'
+    apply plugin: 'eclipse'
+    apply plugin: 'idea'
+    apply plugin: 'maven-publish'
+
+    sourceCompatibility = 1.7
+    targetCompatibility = 1.7
+
+    repositories {
+        maven {
+            name = 'tealcube-repo'
+            url = 'http://maven.tealcubegames.com/content/groups/public'
+        }
+        mavenCentral()
+    }
+
+    dependencies {
+        compile group: 'org.jruby', name: 'jruby', version: '9.0.1.0', changing: false
+    }
+
+    sourceSets {
+        // Creates a templates SourceSet in order to allow templates to be filtered
+        templates {
+            output.classesDir = "$buildDir/templates"
+        }
+        main {
+            // Adds the output of the templates SourceSet to the Java sources of the main SourceSet
+            java.srcDir(sourceSets.templates.output.classesDir)
+        }
+    }
+
+    processResources {
+        filter ReplaceTokens, tokens: [
+                VERSION : version + "-" + (System.getenv("BUILD_NUMBER") ?: "0"),
+                NAME    : System.getenv("JOB_NAME") ?: project.name,
+                ARTIFACT: project.name.toLowerCase()
+        ]
+    }
+
+    // Processes the Java templates and outputs them for the compiler to pick up
+    task processTemplates(type: Copy) {
+        from sourceSets.templates.java
+        into sourceSets.templates.output.classesDir
+        filter ReplaceTokens, tokens: [
+                VERSION : version + "+" + (System.getenv("BUILD_NUMBER") ?: "0"),
+                NAME    : System.getenv("JOB_NAME") ?: project.name,
+                ARTIFACT: project.name.toLowerCase()
+        ]
+    }
+    compileJava.dependsOn processTemplates
+
+    task sourcesJar(type: Jar) {
+        from sourceSets.main.allSource
+        classifier = 'sources'
+    }
+
+    task javadocJar(type: Jar, dependsOn: javadoc) {
+        classifier = 'javadoc'
+        from javadoc.destinationDir
+    }
+
+    shadowJar {
+        dependencies {
+            include(dependency('org.jruby:jruby'))
+        }
+    }
+
+    build.dependsOn(sourcesJar)
+    build.dependsOn(javadocJar)
+    build.dependsOn(shadowJar)
+
+    license {
+        ext.name = rootProject.projectName
+        ext.author = rootProject.author
+        ext.url = rootProject.authorUrl
+        ext.year = rootProject.inceptionYear
+
+        header new File(rootProject.projectDir, 'HEADER')
+
+        sourceSets = project.sourceSets
+
+        ignoreFailures false
+        strictCheck true
+
+        mapping {
+            java = 'SLASHSTAR_STYLE'
+        }
+    }
+
+    publishing {
+        publications {
+            java(MavenPublication) {
+                artifactId project.getName().toLowerCase()
+                from components.java
+
+                artifact sourcesJar
+
+                artifact javadocJar
+
+                artifact shadowJar
+            }
+        }
+        repositories {
+            maven {
+                url "http://maven.tealcubegames.com/content/repositories/${project.version.endsWith('-SNAPSHOT') ? 'snapshots' : 'releases'}/"
+                name 'tealcube-repo'
+                credentials {
+                    username System.getenv('nexus.username') ?: nexusUsername
+                    password System.getenv('nexus.password') ?: nexusPassword
+                }
+            }
+        }
+    }
+}
+
+project(':opal-sponge') {
+    group = 'com.tealcube.minecraft.sponge'
+}
+
+project(':opal-spigot') {
+    group = 'com.tealcube.minecraft.spigot'
+}
+
+// If in a continuous integration environment (CI),
+// refresh any modules marked as changing
+configurations.all {
+    if (System.getenv("BUILD_NUMBER") != null) {
+        resolutionStrategy.cacheChangingModulesFor 0, 'seconds'
+    }
+}
